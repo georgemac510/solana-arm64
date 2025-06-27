@@ -97,8 +97,12 @@ jobs:
         cd test-compile
         cargo init --lib
         
-        # Add Solana dependency
-        cat >> Cargo.toml << EOF
+        # Replace Cargo.toml with our version (avoiding duplicate [dependencies])
+        cat > Cargo.toml << EOF
+        [package]
+        name = "test-compile"
+        version = "0.1.0"
+        edition = "2021"
         
         [dependencies]
         solana-program = "~1.18"
