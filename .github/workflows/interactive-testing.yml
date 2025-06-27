@@ -1,0 +1,189 @@
+# .github/workflows/interactive-testing.yml
+name: Interactive Solana Testing
+
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: 'Command to run (e.g., "solana --version", "anchor init test")'
+        required: true
+        default: 'solana --version'
+        type: string
+      
+      test_type:
+        description: 'Type of test to run'
+        required: true
+        default: 'basic'
+        type: choice
+        options:
+        - basic
+        - anchor_project
+        - custom_program
+        - benchmarks
+        - full_suite
+      
+      solana_version:
+        description: 'Solana version'
+        required: false
+        default: 'stable'
+        type: string
+
+jobs:
+  interactive-test:
+    runs-on: macos-14  # M1 runner
+    
+    steps:
+    - name: 🔄 Setup Environment
+      run: |
+        echo "🚀 Setting up Solana development environment..."
+        
+        # Install Solana CLI
+        sh -c "$(curl -sSfL https://release.anza.xyz/${{ inputs.solana_version }}/install)"
+        export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+        echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+        
+        # Install Rust
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        source ~/.cargo/env
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        
+        # Install Anchor if needed
+        if [[ "${{ inputs.test_type }}" == *"anchor"* ]]; then
+          source ~/.cargo/env
+          cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
+          avm install latest
+          avm use latest
+        fi
+        
+        echo "✅ Environment ready!"
+    
+    - name: 🧪 Run Custom Command
+      run: |
+        export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+        source ~/.cargo/env 2>/dev/null || true
+        
+        echo "🎯 Running custom command: ${{ inputs.command }}"
+        echo "==============================================="
+        
+        # Execute the custom command
+        ${{ inputs.command }}
+        
+        echo "==============================================="
+        echo "✅ Command completed!"
+    
+    - name: 🔬 Run Test Suite
+      run: |
+        export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+        source ~/.cargo/env 2>/dev/null || true
+        
+        case "${{ inputs.test_type }}" in
+          "basic")
+            echo "🧪 Running basic tests..."
+            solana --version
+            solana config set --url devnet
+            solana config get
+            ;;
+            
+          "anchor_project")
+            echo "⚓ Creating and testing Anchor project..."
+            anchor init test-project --no-git
+            cd test-project
+            anchor build
+            echo "✅ Anchor project created and built successfully!"
+            ;;
+            
+          "custom_program")
+            echo "🔨 Creating custom Solana program..."
+            mkdir custom-program && cd custom-program
+            cat > Cargo.toml << EOF
+        [package]
+        name = "custom-program"
+        version = "0.1.0"
+        edition = "2021"
+        
+        [dependencies]
+        solana-program = "~1.18"
+        
+        [lib]
+        crate-type = ["cdylib", "lib"]
+        EOF
+            
+            mkdir src
+            cat > src/lib.rs << 'EOF'
+        use solana_program::{
+            account_info::AccountInfo,
+            entrypoint,
+            entrypoint::ProgramResult,
+            msg,
+            pubkey::Pubkey,
+        };
+        
+        entrypoint!(process_instruction);
+        
+        pub fn process_instruction(
+            _program_id: &Pubkey,
+            _accounts: &[AccountInfo],
+            _instruction_data: &[u8],
+        ) -> ProgramResult {
+            msg!("Hello from ARM64 Solana program!");
+            Ok(())
+        }
+        EOF
+            
+            cargo build-bpf
+            echo "✅ Custom program compiled successfully!"
+            ;;
+            
+          "benchmarks")
+            echo "📊 Running performance benchmarks..."
+            echo "⏱️  Keypair generation benchmark:"
+            time solana-keygen new --no-bip39-passphrase --silent --outfile /tmp/bench-key.json
+            
+            echo "⏱️  Cluster query benchmark:"
+            time solana cluster-version
+            
+            echo "💾 System resources:"
+            vm_stat | head -10
+            ;;
+            
+          "full_suite")
+            echo "🎯 Running full test suite..."
+            
+            # Basic functionality
+            echo "1️⃣ Testing basic functionality..."
+            solana --version
+            solana config set --url devnet
+            
+            # Rust compilation
+            echo "2️⃣ Testing Rust compilation..."
+            mkdir full-test && cd full-test
+            cargo init --lib
+            echo 'solana-program = "~1.18"' >> Cargo.toml
+            cargo check
+            
+            # Anchor (if available)
+            if command -v anchor >/dev/null; then
+              echo "3️⃣ Testing Anchor..."
+              cd ..
+              anchor init anchor-full-test --no-git
+              cd anchor-full-test
+              anchor build
+            fi
+            
+            echo "✅ Full suite completed!"
+            ;;
+        esac
+    
+    - name: 📊 System Information
+      if: always()
+      run: |
+        echo "📋 Final System State:"
+        echo "===================="
+        echo "Architecture: $(uname -m)"
+        echo "macOS Version: $(sw_vers -productVersion)"
+        echo "Solana Version: $(solana --version 2>/dev/null || echo 'Not installed')"
+        echo "Rust Version: $(rustc --version 2>/dev/null || echo 'Not installed')"
+        echo "Anchor Version: $(anchor --version 2>/dev/null || echo 'Not installed')"
+        echo "Available Space: $(df -h / | tail -1)"
+        echo "Memory Usage: $(vm_stat | grep 'Pages free' | awk '{print $3}')"
+        echo "===================="
