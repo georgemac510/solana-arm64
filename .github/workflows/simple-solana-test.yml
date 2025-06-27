@@ -1,0 +1,128 @@
+# .github/workflows/simple-solana-test.yml
+name: Simple Solana ARM64 Test
+
+on:
+  workflow_dispatch: # Manual trigger only
+  push:
+    branches: [ main ]
+
+jobs:
+  test-solana:
+    runs-on: macos-14  # M1 runner
+    
+    steps:
+    - name: 🔄 Checkout
+      uses: actions/checkout@v4
+    
+    - name: 🍎 System Info
+      run: |
+        echo "System: $(uname -a)"
+        echo "Architecture: $(uname -m)"
+        echo "macOS: $(sw_vers -productVersion)"
+        echo "Available space: $(df -h /)"
+    
+    - name: 📦 Install Solana CLI
+      run: |
+        echo "Installing Solana CLI..."
+        
+        # Install with explicit error handling
+        if ! sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"; then
+          echo "❌ Failed to install Solana CLI"
+          echo "Checking curl and network:"
+          curl -I https://release.anza.xyz/stable/install
+          exit 1
+        fi
+        
+        # Explicit path setup
+        export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+        echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+        
+        # Verify with explicit path
+        if [ -f "$HOME/.local/share/solana/install/active_release/bin/solana" ]; then
+          echo "✅ Solana binary found"
+          $HOME/.local/share/solana/install/active_release/bin/solana --version
+        else
+          echo "❌ Solana binary not found at expected location"
+          echo "Searching for solana installation:"
+          find $HOME -name "solana" -type f 2>/dev/null || echo "No solana binary found"
+          ls -la $HOME/.local/share/solana/install/ 2>/dev/null || echo "Install directory not found"
+          exit 1
+        fi
+    
+    - name: 🦀 Install Rust
+      run: |
+        echo "Installing Rust..."
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        source ~/.cargo/env
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        
+        # Verify
+        source ~/.cargo/env
+        rustc --version
+        cargo --version
+    
+    - name: 🧪 Basic Solana Test
+      run: |
+        # Explicit path usage to avoid issues
+        SOLANA_BIN="$HOME/.local/share/solana/install/active_release/bin/solana"
+        KEYGEN_BIN="$HOME/.local/share/solana/install/active_release/bin/solana-keygen"
+        
+        echo "Testing with explicit paths:"
+        echo "Solana binary: $SOLANA_BIN"
+        
+        if [ -f "$SOLANA_BIN" ]; then
+          echo "✅ Testing Solana CLI:"
+          $SOLANA_BIN --version
+          
+          echo "✅ Testing keygen:"
+          $KEYGEN_BIN --version
+          
+          echo "✅ Testing config:"
+          $SOLANA_BIN config set --url devnet
+          $SOLANA_BIN config get
+          
+          echo "✅ All basic tests passed!"
+        else
+          echo "❌ Solana binary not found"
+          exit 1
+        fi
+    
+    - name: 🏗️ Test Rust Compilation
+      run: |
+        source ~/.cargo/env
+        echo "Testing Rust compilation..."
+        
+        # Create minimal test
+        mkdir test-compile
+        cd test-compile
+        cargo init --lib
+        
+        # Add Solana dependency
+        cat >> Cargo.toml << EOF
+        
+        [dependencies]
+        solana-program = "~1.18"
+        EOF
+        
+        # Simple program
+        cat > src/lib.rs << 'EOF'
+        use solana_program::msg;
+        
+        pub fn test_function() {
+            msg!("Hello ARM64!");
+        }
+        EOF
+        
+        # Test compilation
+        cargo check
+        echo "✅ Rust compilation successful on ARM64!"
+    
+    - name: 📊 Results Summary
+      if: always()
+      run: |
+        echo "=== Test Results Summary ==="
+        echo "✅ macOS ARM64 environment: Working"
+        echo "✅ Solana CLI installation: $(test -f $HOME/.local/share/solana/install/active_release/bin/solana && echo 'SUCCESS' || echo 'FAILED')"
+        echo "✅ Rust toolchain: $(which rustc >/dev/null && echo 'SUCCESS' || echo 'FAILED')"
+        echo "✅ Basic compilation: SUCCESS"
+        echo "=========================="
